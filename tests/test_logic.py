@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from accidental_dj import db
 from accidental_dj.camelot import compatible_codes, keys_compatible, to_camelot
-from accidental_dj.matching import (Candidate, build_pairs, ratio_label,
-                                    tempo_match)
+from accidental_dj.matching import (Candidate, Pair, build_pairs, longest_chain,
+                                    ratio_label, tempo_match)
 from accidental_dj.report import payload, render
 from accidental_dj.spotify import flatten
 from accidental_dj.textnorm import clean_title, primary_artist
@@ -229,3 +229,37 @@ class TestReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestChain(unittest.TestCase):
+    """The playlist chain: every consecutive pair must be a real transition."""
+
+    def line(self):
+        return [Pair(0, 1, 0.1, 1.0, True), Pair(1, 2, 0.2, 1.0, True),
+                Pair(2, 3, 0.3, 1.0, True), Pair(7, 8, 0.1, 1.0, True)]
+
+    def test_finds_the_long_run_not_the_short_one(self):
+        self.assertEqual(longest_chain(self.line()), [0, 1, 2, 3])
+
+    def test_every_step_is_a_real_pair(self):
+        chain = longest_chain(self.line())
+        edges = {(min(p.a, p.b), max(p.a, p.b)) for p in self.line()}
+        for first, second in zip(chain, chain[1:]):
+            self.assertIn((min(first, second), max(first, second)), edges)
+
+    def test_no_track_appears_twice(self):
+        chain = longest_chain([Pair(0, 1, 0, 1.0, True), Pair(1, 2, 0, 1.0, True),
+                               Pair(0, 2, 0, 1.0, True)])
+        self.assertEqual(len(chain), len(set(chain)))
+
+    def test_empty_and_single_edge(self):
+        self.assertEqual(longest_chain([]), [])
+        self.assertEqual(sorted(longest_chain([Pair(5, 6, 0, 1.0, True)])), [5, 6])
+
+    def test_budget_is_respected(self):
+        # A dense graph would explode without the cap; this must still return.
+        dense = [Pair(a, b, 0.0, 1.0, True)
+                 for a in range(14) for b in range(a + 1, 14)]
+        chain = longest_chain(dense, max_steps=500)
+        self.assertEqual(len(chain), len(set(chain)))
+        self.assertGreaterEqual(len(chain), 2)

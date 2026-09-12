@@ -52,6 +52,7 @@ source .venv/bin/activate                       # or prefix each with .venv/bin/
 python -m accidental_dj sync                    # pull Liked Songs into SQLite
 python -m accidental_dj enrich                  # look up tempo + key (slow)
 python -m accidental_dj build                   # write transitions.html
+python -m accidental_dj playlist --dry-run      # preview a continuous set
 ```
 
 Then open `transitions.html` in a browser. It is a single file with the data
@@ -91,6 +92,32 @@ Expect misses. A library of a few thousand tracks takes an hour or so.
 
 The page's drift slider filters *within* the tolerance you built with, so
 building at `--tolerance 6` and sliding down is more flexible than rebuilding.
+
+### playlist
+
+Treats the transitions as a graph and walks it for the longest run where every
+consecutive track is a real key-and-tempo match, then creates that as a Spotify
+playlist in order — so it plays as one continuous set rather than a list of
+disconnected pairs.
+
+```bash
+python -m accidental_dj playlist --tolerance 6 --dry-run     # print it, write nothing
+python -m accidental_dj playlist --tolerance 6 --name "Set 1" # create it
+```
+
+Takes the same matching flags as `build`, plus `--name`, `--limit`, `--public`
+(private by default), `--dry-run`, `--yes` to skip the confirmation, and
+`--search-budget`.
+
+Longest-simple-path is NP-hard, so the search is a bounded depth-first walk
+rather than a proof of optimality. The budget matters: on a 107-track library
+300k steps found a 33-track chain and 2M found 40, so the default is 2M
+(about half a second). Raise it for a big library.
+
+This is the only command that writes anything. It needs the
+`playlist-modify-private` scope on top of the read-only one, so the first run
+re-opens the browser for authorization; afterwards the broader token covers
+`sync` too.
 
 ## The matching logic
 

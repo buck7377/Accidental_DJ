@@ -16,6 +16,10 @@ from .textnorm import fold
 
 DEFAULT_TOLERANCE = 3.0
 DEFAULT_MAX_PER_TRACK = 6
+# Steps the chain search may take. Measured on a 107-track library: 300k found
+# 33 tracks, 2M found 40 in half a second, 10M found no more. Bounded so the
+# search always returns quickly regardless of library size.
+DEFAULT_SEARCH_BUDGET = 2_000_000
 
 
 @dataclass(frozen=True)
@@ -172,3 +176,57 @@ def candidates_from_rows(rows: Iterable[dict]) -> list[Candidate]:
             )
         )
     return out
+
+
+def longest_chain(pairs: Sequence[Pair], max_steps: int = DEFAULT_SEARCH_BUDGET) -> list[int]:
+    """Longest run of tracks where every consecutive pair is a real match.
+
+    This is the longest-simple-path problem, which is NP-hard, so it is a
+    depth-first search under a step budget rather than a proof of optimality:
+    deep-first via a Warnsdorff-style preference for low-degree neighbours,
+    deterministic, and bounded so it always returns quickly. Good enough to
+    find a long playable set, which is the point.
+    """
+    adjacency: dict[int, set[int]] = {}
+    for pair in pairs:
+        adjacency.setdefault(pair.a, set()).add(pair.b)
+        adjacency.setdefault(pair.b, set()).add(pair.a)
+    if not adjacency:
+        return []
+
+    neighbours = {
+        node: sorted(links, key=lambda n: (len(adjacency[n]), n))
+        for node, links in adjacency.items()
+    }
+
+    best: list[int] = []
+    steps = 0
+
+    def walk(node: int, path: list[int], seen: set[int]) -> None:
+        nonlocal best, steps
+        steps += 1
+        if steps > max_steps:
+            return
+        if len(path) > len(best):
+            best = list(path)
+        for nxt in neighbours[node]:
+            if nxt in seen:
+                continue
+            seen.add(nxt)
+            path.append(nxt)
+            walk(nxt, path, seen)
+            path.pop()
+            seen.remove(nxt)
+
+    # Start from the least-connected tracks: a long path tends to end at one.
+    for start in sorted(neighbours, key=lambda n: (len(neighbours[n]), n)):
+        if steps > max_steps:
+            break
+        walk(start, [start], {start})
+
+    return best
+
+
+def pair_lookup(pairs: Sequence[Pair]) -> dict[tuple[int, int], Pair]:
+    """Index pairs by their unordered endpoints, for annotating a chain."""
+    return {(min(p.a, p.b), max(p.a, p.b)): p for p in pairs}

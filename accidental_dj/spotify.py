@@ -13,7 +13,13 @@ from typing import Iterator
 from .textnorm import primary_artist
 
 SCOPE = "user-library-read"
+# Writing a playlist needs more than the read-only scope. Asking for it only
+# when a playlist is actually being created keeps sync read-only; the broader
+# token also satisfies sync afterwards, so this costs one re-authorization.
+SCOPE_PLAYLIST_PRIVATE = SCOPE + " playlist-modify-private"
+SCOPE_PLAYLIST_PUBLIC = SCOPE_PLAYLIST_PRIVATE + " playlist-modify-public"
 PAGE_SIZE = 50
+ADD_BATCH = 100  # Spotify caps additions at 100 tracks per request
 ENV_VARS = ("SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "SPOTIPY_REDIRECT_URI")
 
 
@@ -21,7 +27,7 @@ class SpotifyConfigError(RuntimeError):
     pass
 
 
-def make_client(cache_path: str = ".spotify-cache"):
+def make_client(cache_path: str = ".spotify-cache", scope: str = SCOPE):
     """Authenticated spotipy client, or a clear message about what is missing."""
     missing = [name for name in ENV_VARS if not os.environ.get(name)]
     if missing:
@@ -41,7 +47,7 @@ def make_client(cache_path: str = ".spotify-cache"):
             "spotipy is not installed. Run: pip install -r requirements.txt"
         ) from exc
 
-    kwargs = {"scope": SCOPE}
+    kwargs = {"scope": scope}
     try:
         # Preferred since spotipy 2.26; passing cache_path directly is deprecated.
         from spotipy.cache_handler import CacheFileHandler
@@ -93,3 +99,16 @@ def flatten(item: dict) -> dict | None:
         "isrc": ((track.get("external_ids") or {}).get("isrc")),
         "added_at": item.get("added_at"),
     }
+
+
+def create_playlist(client, name: str, track_ids: list[str], *, public: bool = False,
+                    description: str = "") -> str:
+    """Create a playlist and fill it in order. Returns its public URL."""
+    user_id = client.current_user()["id"]
+    playlist = client.user_playlist_create(
+        user_id, name, public=public, description=description
+    )
+    uris = [f"spotify:track:{track_id}" for track_id in track_ids]
+    for start in range(0, len(uris), ADD_BATCH):
+        client.playlist_add_items(playlist["id"], uris[start:start + ADD_BATCH])
+    return (playlist.get("external_urls") or {}).get("spotify") or playlist["id"]
