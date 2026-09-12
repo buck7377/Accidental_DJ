@@ -2,16 +2,7 @@
 
 Accidental DJ finds songs in your Spotify library that mix into each other. It matches them on key and tempo, then builds a playlist from the longest run of songs it can chain together.
 
-The tool ignores genre, mood, and era. It compares key and tempo, nothing else. You get pairings like these:
-
-| It pairs this | With this |
-| --- | --- |
-| Kanye West, "Everything I Am" (2007, 80 BPM) | Frontierer, "Glitcher" (2018, 160 BPM) |
-| Hank Williams, "Lost Highway" (1951, 132 BPM) | BlocBoy JB, "Shoot" (2017, 135 BPM) |
-| Marvin Gaye, "Distant Lover" (1973, 136 BPM) | La Bouche, "Be My Lover" (1995, 136 BPM) |
-| Pantera, "I'm Broken" (1994, 144 BPM) | Lady Gaga, "Speechless" (2009, 144 BPM) |
-
-Every pair shares a compatible key and sits within a few BPM of its partner, so one track slides into the next.
+The tool ignores genre, mood, and era. It compares key and tempo, nothing else, so a country record from the 50s can land next to a metal track from last year.
 
 ## What you need
 
