@@ -159,4 +159,14 @@ def create_playlist(client, name: str, track_ids: list[str], *, public: bool = F
     for start in range(0, len(uris), ADD_BATCH):
         _write(client, "POST", f"/playlists/{playlist_id}/items",
                {"uris": uris[start:start + ADD_BATCH]})
+
+    # A playlist made through the API does not always land in Your Library on
+    # its own, which leaves it invisible in the Spotify client even though it
+    # exists. Following it is what the client's "Add to Library" does. Never
+    # fatal: the playlist is already made and filled by this point.
+    try:
+        _write(client, "PUT", f"/playlists/{playlist_id}/followers", {"public": public})
+    except SpotifyWriteError:
+        pass
+
     return (playlist.get("external_urls") or {}).get("spotify") or playlist_id

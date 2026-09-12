@@ -187,6 +187,22 @@ class TestPlaylistWrites(unittest.TestCase):
         self.assertEqual(adds[0][2]["uris"][0], "spotify:track:t0")
         self.assertEqual(adds[-1][2]["uris"][-1], "spotify:track:t249")
 
+    def test_adds_the_playlist_to_the_library(self):
+        _url, calls = self.run_with(1)
+        self.assertEqual(calls[-1][:2], ("PUT", "/playlists/PL1/followers"))
+
+    def test_a_failed_follow_does_not_lose_the_playlist(self):
+        calls = []
+
+        def flaky(client, method, path, payload):
+            calls.append(path)
+            if path.endswith("/followers"):
+                raise spotify.SpotifyWriteError("nope")
+            return {"id": "PL1", "external_urls": {"spotify": "u"}}
+
+        with mock.patch.object(spotify, "_write", flaky):
+            self.assertEqual(spotify.create_playlist(object(), "S", ["t1"]), "u")
+
     def test_returns_the_playlist_url(self):
         url, _calls = self.run_with(1)
         self.assertEqual(url, "https://open.spotify.com/playlist/PL1")
