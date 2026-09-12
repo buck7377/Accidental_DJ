@@ -148,7 +148,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     total = len(pending)
     print(f"Enriching {total} track(s) from GetSongBPM at ~{args.delay}s per request "
           f"(about {_fmt_duration(total * args.delay)}). Ctrl-C is safe -- progress "
-          "is committed after every track.")
+          "is committed after every track.", flush=True)
 
     counts = {"ok": 0, "no_match": 0, "error": 0}
     started = time.monotonic()
@@ -174,8 +174,11 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 mark = f"{result.status:<8} {(result.detail or '')[:30]:<30}"
             elapsed = time.monotonic() - started
             eta = (elapsed / processed) * (total - processed)
+            # flush: stdout is block-buffered when redirected to a file or
+            # piped, and a progress line nobody sees until the end is useless.
             print(f"[{index:>4}/{total}] {mark}  {track['title'][:38]} — "
-                  f"{track['primary_artist'][:24]}   eta {_fmt_duration(eta)}")
+                  f"{track['primary_artist'][:24]}   eta {_fmt_duration(eta)}",
+                  flush=True)
     except KeyboardInterrupt:
         conn.commit()
         print(f"\nStopped after {processed} of {total} track(s). "

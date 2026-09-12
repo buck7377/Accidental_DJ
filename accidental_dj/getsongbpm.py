@@ -10,6 +10,7 @@ data is displayed -- the generated page carries it in the footer.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -27,6 +28,12 @@ BACKLINK = "https://getsongbpm.com"
 DEFAULT_DELAY = 1.3
 TITLE_THRESHOLD = 0.72
 ARTIST_THRESHOLD = 0.60
+# Bands are often credited more fully on one side than the other
+# ("Buck Owens" vs "Buck Owens and His Buckaroos"). Treat the longer name as
+# the same artist only when the extra part starts with a joining word, so
+# "Drake" never absorbs "Drake Bell".
+_ARTIST_TAIL = re.compile(r"^(?:and|with|his|her|their|the|featuring|feat|ft)\b")
+_REMIX_MARKER = re.compile(r"\b(?:remix|rmx|bootleg|flip|mashup)\b", re.IGNORECASE)
 
 
 class GetSongBPMError(RuntimeError):
@@ -65,6 +72,17 @@ class RateLimiter:
 
 def _score(a: str, b: str) -> float:
     return SequenceMatcher(None, fold(a), fold(b)).ratio()
+
+
+def _artist_score(mine: str, theirs: str) -> float:
+    """Similarity, but tolerant of one side carrying a fuller band credit."""
+    base = _score(mine, theirs)
+    a, b = fold(mine), fold(theirs)
+    if a and b and a != b:
+        short, long = (a, b) if len(a) < len(b) else (b, a)
+        if long.startswith(short + " ") and _ARTIST_TAIL.match(long[len(short) + 1:]):
+            return max(base, 0.95)
+    return base
 
 
 class GetSongBPMClient:
@@ -179,22 +197,36 @@ class GetSongBPMClient:
         )
 
     def _best_match(self, results: list[dict], title: str, artist: str):
+        """Best candidate that clears both thresholds, or None.
+
+        Their titles get the same noise stripping as ours before comparison --
+        otherwise "Rover 2.0" never matches "Rover 2.0 (feat. 21 Savage)",
+        which is the same recording. A remix is not, so a remix on one side
+        only disqualifies the candidate outright: its tempo is not this song's.
+        """
+        wanted_remix = bool(_REMIX_MARKER.search(title))
         best, best_score = None, 0.0
+        runner_up = 0.0
+
         for item in results:
             if not isinstance(item, dict):
                 continue
-            item_title = item.get("title") or ""
+            raw_title = item.get("title") or ""
             item_artist = (item.get("artist") or {}).get("name") or ""
-            title_score = _score(title, item_title)
-            artist_score = _score(artist, item_artist)
+            if bool(_REMIX_MARKER.search(raw_title)) != wanted_remix:
+                continue
+
+            item_title = clean_title(raw_title)
+            title_score = max(_score(title, item_title), _score(title, raw_title))
+            artist_score = _artist_score(artist, item_artist)
             combined = title_score * 0.6 + artist_score * 0.4
-            if combined > best_score:
+            runner_up = max(runner_up, combined)
+
+            if title_score >= TITLE_THRESHOLD and artist_score >= ARTIST_THRESHOLD \
+                    and combined > best_score:
                 best, best_score = item, combined
-        if best is None:
-            return None, 0.0
-        title_ok = _score(title, best.get("title") or "") >= TITLE_THRESHOLD
-        artist_ok = _score(artist, (best.get("artist") or {}).get("name") or "") >= ARTIST_THRESHOLD
-        return (best, best_score) if (title_ok and artist_ok) else (None, best_score)
+
+        return (best, best_score) if best else (None, runner_up)
 
 
 def _unwrap(payload: Any, key: str):
