@@ -22,6 +22,21 @@ def _err(message: str) -> int:
     return 1
 
 
+def _partial_note(conn) -> None:
+    """Flag rows that resolved with only half the data, so build's smaller
+    count is never a surprise. GetSongBPM sometimes has a tempo but an empty
+    key_of (or vice versa)."""
+    partial = db.count(
+        conn,
+        "SELECT COUNT(*) FROM audio WHERE status = 'ok' "
+        "AND (camelot IS NULL OR tempo IS NULL)",
+    )
+    if partial:
+        print(f"{partial} resolved track(s) have only partial data (GetSongBPM is "
+              "missing the key or tempo). They show up under All tracks but "
+              "cannot be paired.")
+
+
 def _fmt_duration(seconds: float) -> str:
     seconds = int(seconds)
     if seconds < 60:
@@ -125,6 +140,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         done = db.count(conn, "SELECT COUNT(*) FROM audio WHERE status = 'ok'")
         misses = db.count(conn, "SELECT COUNT(*) FROM audio WHERE status <> 'ok'")
         print(f"Nothing to enrich: {done} track(s) resolved, {misses} cached miss(es).")
+        _partial_note(conn)
         if misses:
             print("Use --retry-misses to try the misses again.")
         return 0
@@ -171,6 +187,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
 
     print(f"\nDone: {counts['ok']} resolved, {counts['no_match']} not found, "
           f"{counts['error']} failed.")
+    _partial_note(conn)
     if counts["no_match"] or counts["error"]:
         print("Misses are cached so re-runs skip them. Retry with --retry-misses.")
     remaining = len(db.pending_tracks(conn))
