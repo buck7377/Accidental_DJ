@@ -131,6 +131,12 @@ format following the extension:
 | `.csv` | title, artist, album, year, BPM, key, ISRC, URL | upload at soundiiz.com or tunemymusic.com, or open in a spreadsheet |
 | `.m3u8` | playlist file of Spotify URLs | players that accept M3U |
 
+Two notes on privacy. The playlist is created with `public: false`, but on
+Spotify "private" means unlisted rather than access-controlled: anyone with
+the link can still open any playlist. Spotify's `public` field also reads back
+unreliably after creation, so check the playlist in your Spotify client if it
+matters — the client is the authority, and you can toggle it there.
+
 Add `--export-only` to skip Spotify entirely — no write scope, no
 re-authorization, nothing touched on your account.
 
