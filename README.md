@@ -1,168 +1,161 @@
 # Accidental DJ
 
-Finds songs in your Spotify library that would mix into each other — same key,
-almost identical tempo — no matter how little business they have being played
-together, and turns the best run of them into a playlist.
+Accidental DJ finds songs in your Spotify library that mix into each other. It matches them on key and tempo, then builds a playlist from the longest run of songs it can chain together.
 
-It has no taste and no opinion about genre. It only knows key and tempo, which
-is how you end up with a 1951 Hank Williams record flowing into brutal death
-metal, or Marvin Gaye into 90s eurodance.
+The tool ignores genre, mood, and era. It compares key and tempo, nothing else. You get pairings like these:
 
-Real examples from one 207-song library:
+| It pairs this | With this |
+| --- | --- |
+| Kanye West, "Everything I Am" (2007, 80 BPM) | Frontierer, "Glitcher" (2018, 160 BPM) |
+| Hank Williams, "Lost Highway" (1951, 132 BPM) | BlocBoy JB, "Shoot" (2017, 135 BPM) |
+| Marvin Gaye, "Distant Lover" (1973, 136 BPM) | La Bouche, "Be My Lover" (1995, 136 BPM) |
+| Pantera, "I'm Broken" (1994, 144 BPM) | Lady Gaga, "Speechless" (2009, 144 BPM) |
 
-```
-Everything I Am — Kanye West  (2007, 80 BPM)   →  Glitcher — Frontierer (2018, 160 BPM)
-Lost Highway — Hank Williams  (1951, 132 BPM)  →  Shoot — BlocBoy JB (2017, 135 BPM)
-Distant Lover — Marvin Gaye   (1973, 136 BPM)  →  Be My Lover — La Bouche (1995, 136 BPM)
-I'm Broken — Pantera          (1994, 144 BPM)  →  Speechless — Lady Gaga (2009, 144 BPM)
-```
+Every pair shares a compatible key and sits within a few BPM of its partner, so one track slides into the next.
 
-## Getting started
+## What you need
 
-You need a Mac or Linux computer and about ten minutes, most of it waiting for
-a free API key.
+- A Mac or Linux computer.
+- A Spotify account, free or paid.
+- About ten minutes.
 
-**1. Download it**
+Both logins cost nothing, and the setup script tells you where to click.
+
+## Setup
 
 ```bash
 git clone https://github.com/buck7377/Accidental_DJ.git
 cd Accidental_DJ
-```
-
-**2. Run the setup**
-
-```bash
 ./setup.sh
 ```
 
-It installs what it needs and walks you through getting two free logins: one
-from Spotify, so it can read your liked songs and make playlists, and one from
-GetSongBPM, which is where the tempo and key of each song comes from. It tells
-you exactly where to click. Your logins are saved on your own computer and
-never leave it.
+The script installs what the tool needs, then asks for two logins and saves them on your computer.
 
-**3. Check it worked**
+Spotify covers reading your liked songs and creating playlists. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), add `http://127.0.0.1:8888/callback` as the redirect URI, tick Web API, then copy the Client ID and Client Secret.
+
+GetSongBPM supplies the tempo and key of each song. Request a free key at [getsongbpm.com/api](https://getsongbpm.com/api). The key arrives by email.
+
+Confirm both logins work:
 
 ```bash
 ./dj check
 ```
 
-Should say `ok` twice. If not, it tells you what to fix.
+You want `ok` twice. If one fails, the message names the fix.
 
 ## Using it
 
-**Read your liked songs.** Takes a few seconds.
+Four commands, run in order.
+
+### Read your liked songs
 
 ```bash
 ./dj sync
 ```
 
-The first time, a browser window asks you to approve access to your own
-Spotify account. Approve it, and you'll land on a page that fails to load —
-that's normal, you can close it. Run this again any time you want to pick up
-songs you have liked since.
+A browser opens and asks you to approve access to your own account. Approve it. You land on a page that fails to load, which is normal, so close it.
 
-**Look up every song's tempo and key.** This is the slow one.
+Run the same command again whenever you like new songs. It picks up only what changed.
+
+### Look up tempo and key
 
 ```bash
 ./dj enrich
 ```
 
-About a minute for every 45 songs, so a 1,000 song library takes roughly
-twenty minutes. It shows progress and how long is left. You can stop it at any
-time with Ctrl-C and pick up where you left off by running it again.
+The slow step. Each song takes one lookup, at roughly 45 songs per minute, so a 1,000 song library finishes in about 22 minutes. The screen shows progress and time remaining.
 
-Expect some songs to come back empty — the tempo database does not have
-everything, and it thins out on very obscure or very new music. Those songs
-are simply left out.
+Press Ctrl-C to stop at any point. Run the command again to pick up where you left off.
 
-**See what it found.**
+Some songs come back empty because the tempo database doesn't list them. The tool skips those and moves on.
+
+### See what it found
 
 ```bash
 ./dj transitions
 ```
 
-Lists the pairs, closest tempo match first. Some ways to narrow it down:
+The closest tempo matches come first. Narrow the list:
 
 ```bash
-./dj transitions --limit 100          # show more than the default 40
-./dj transitions --same-key-only      # only the smoothest matches
-./dj transitions --search "1974"      # only pairs involving a year, artist or song
+./dj transitions --limit 100        # show more than the default 40
+./dj transitions --same-key-only    # only the smoothest matches
+./dj transitions --search "1974"    # only pairs involving a year, artist, or song
 ```
 
-**Make the playlist.**
+### Build the playlist
 
 ```bash
 ./dj playlist
 ```
 
-It finds the longest run of songs where each one flows into the next, shows
-you the running order, and asks before creating anything. Say yes and it
-appears in your Spotify within a few seconds. Nothing is created unless you
-say yes.
+The tool finds the longest run of songs where each one flows into the next. It prints the running order and asks before it creates anything. Answer yes, and the playlist appears in Spotify within seconds.
 
-To name it:
+Name it yourself:
 
 ```bash
 ./dj playlist --name "Saturday Night"
 ```
 
-## Adjusting it
+## Adjusting the results
 
-**Not enough results?** Loosen how close the tempos must be. The default is 3%,
-meaning a 120 BPM song matches roughly 117–123.
+Tempo tolerance drives everything. The default allows 3%, so a 120 BPM song matches anything from 117 to 123.
+
+Loosen it for more matches:
 
 ```bash
-./dj transitions --tolerance 6
 ./dj playlist --tolerance 6
 ```
 
-**Too loose?** Tighten it the same way with `--tolerance 1.5`. You will get
-fewer, better matches.
-
-**Other options**
+Tighten it for fewer, closer ones:
 
 ```bash
-./dj playlist --limit 20            # a shorter playlist
-./dj playlist --public              # anyone can find it (private by default)
-./dj playlist --dry-run             # show it, create nothing
-./dj transitions --allow-same-artist    # let an artist match themselves
+./dj playlist --tolerance 1.5
 ```
 
-## Saving a playlist to a file instead
+Other options:
 
-If you would rather not let it touch your Spotify account:
+- `--limit 20` caps how many songs land in the playlist.
+- `--public` lists the playlist on your profile. Playlists start private.
+- `--dry-run` prints the set and creates nothing.
+- `--allow-same-artist` lets an artist match themselves.
+
+Every flag works with `./dj transitions` and `./dj playlist` alike.
+
+## Save to a file
+
+Skip Spotify access entirely:
 
 ```bash
 ./dj playlist --export set.txt --export-only
 ```
 
-Open `set.txt`, select everything, copy, and paste it into an empty playlist in
-the Spotify desktop app — the songs appear in order. Use `set.csv` instead if
-you want a spreadsheet, or to move the playlist to Apple Music or YouTube Music
-through a service like Soundiiz.
+Open `set.txt`, select everything, and copy it. Paste it into an empty playlist in the Spotify desktop app, and the songs land in order.
+
+Export `set.csv` for a spreadsheet, or to move the list into Apple Music or YouTube Music through a service like Soundiiz.
 
 ## Questions
 
-**Does it change anything in my Spotify?** Only if you ask. It reads your liked
-songs, and creates a playlist when you run `./dj playlist` and answer yes. It
-never edits or deletes anything.
+**Does it change my Spotify account?**
+Only when you ask. It reads your liked songs. It creates a playlist when you run `./dj playlist` and answer yes. It never edits or deletes anything.
 
-**Will the playlist have duplicates?** No.
+**Will the playlist repeat songs?**
+No.
 
-**Where are my logins stored?** In a file called `env.sh` in this folder, on
-your computer only. It is excluded from uploads.
+**Is the playlist private?**
+Yes, unless you add `--public`. Private on Spotify means the playlist skips your profile, though anyone you hand the link to can open it.
 
-**Some songs are missing from the results.** Either the tempo database does not
-have them, or they have no key or tempo that matches anything else in your
-library. Run `./dj enrich --retry-misses` to try the missing ones again.
+**Where do my logins live?**
+In a file called `env.sh` inside this folder, on your computer. Git excludes the file, so it never uploads anywhere.
 
-**Can I run it on a different computer?** Yes. Copy the folder, or clone it
-again and run `./setup.sh` with the same two logins.
+**Why are some songs missing?**
+The tempo database doesn't cover everything, and coverage thins out on obscure or brand new music. Run `./dj enrich --retry-misses` to try the skipped songs again.
+
+**Can I run it on another computer?**
+Yes. Clone the repo again and run `./setup.sh` with the same two logins.
 
 ## Credit
 
-Tempo and key data comes from [GetSongBPM](https://getsongbpm.com), free for
-this kind of use as long as they get a link. Please leave this one here.
+GetSongBPM supplies the tempo and key data. They ask for a link in return, so please keep this one: [getsongbpm.com](https://getsongbpm.com).
 
-Curious how the matching works? See [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+Curious about the matching rules? Read [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
