@@ -8,13 +8,11 @@ import sys
 import time
 from typing import Optional
 
-from . import db
+from . import db, display, export
 from .matching import (DEFAULT_MAX_PER_TRACK, DEFAULT_SEARCH_BUDGET,
-                       DEFAULT_TOLERANCE, build_pairs,
-                       candidates_from_rows, longest_chain, pair_lookup,
-                       ratio_label)
-from . import display, export
-from .textnorm import fold
+                       DEFAULT_TOLERANCE, build_pairs, candidates_from_rows,
+                       longest_chain, pair_lookup, ratio_label)
+from .textnorm import clean_title, fold
 
 DEFAULT_DB = "library.db"
 
@@ -203,10 +201,30 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_pairs(args: argparse.Namespace):
+def _dedupe(track_rows: list[dict]) -> tuple[list[dict], int]:
+    """Drop repeats of the same song saved under more than one Spotify id.
+
+    A single and an album release of one track are different ids, so the
+    chain would otherwise treat them as two songs and a set could play the
+    same thing twice. Compared on cleaned title plus primary artist, which
+    also collapses a live or remastered cut into the original.
+    """
+    seen: set[tuple[str, str]] = set()
+    kept, dropped = [], 0
+    for row in track_rows:
+        key = (fold(clean_title(row["title"])), fold(row["primary_artist"]))
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        kept.append(row)
+    return kept, dropped
+
+
+def _load_pairs(args: argparse.Namespace, dedupe: bool = False):
     """Rows, candidates and pairs for the given matching flags.
 
-    Returns (conn, track_rows, candidates, pairs) or an error string.
+    Returns (conn, track_rows, candidates, pairs, dropped) or an error string.
     """
     conn = db.connect(args.db)
     rows = db.all_tracks_with_audio(conn)
@@ -220,6 +238,13 @@ def _load_pairs(args: argparse.Namespace):
         data["bpm"] = data.pop("tempo", None)
         track_rows.append(data)
 
+    dropped = 0
+    if dedupe:
+        track_rows, dropped = _dedupe(track_rows)
+        # Indexes must stay in step with the list they point into.
+        for position, row in enumerate(track_rows):
+            row["index"] = position
+
     candidates = candidates_from_rows(track_rows)
     if not candidates:
         return (f"None of the {len(track_rows)} track(s) have both a tempo and a "
@@ -232,7 +257,7 @@ def _load_pairs(args: argparse.Namespace):
         allow_same_artist=args.allow_same_artist,
         allow_half_double=not args.no_half_double,
     )
-    return conn, track_rows, candidates, pairs
+    return conn, track_rows, candidates, pairs, dropped
 
 
 # ----------------------------------------------------------------- playlist
@@ -243,10 +268,13 @@ def cmd_playlist(args: argparse.Namespace) -> int:
     if args.tolerance <= 0:
         return _err("--tolerance must be greater than 0.")
 
-    loaded = _load_pairs(args)
+    loaded = _load_pairs(args, dedupe=True)
     if isinstance(loaded, str):
         return _err(loaded)
-    _conn, track_rows, _candidates, pairs = loaded
+    _conn, track_rows, _candidates, pairs, dropped = loaded
+    if dropped:
+        print(f"Ignored {dropped} duplicate track(s) saved under more than one "
+              "Spotify id, so the set cannot play the same song twice.")
 
     if not pairs:
         return _err("No compatible pairs at this tolerance, so there is nothing to "
@@ -350,7 +378,7 @@ def cmd_transitions(args: argparse.Namespace) -> int:
     loaded = _load_pairs(args)
     if isinstance(loaded, str):
         return _err(loaded)
-    _conn, track_rows, candidates, pairs = loaded
+    _conn, track_rows, candidates, pairs, _dropped = loaded
 
     terms = [fold(t) for t in (args.search or "").split() if t.strip()]
     shown = [

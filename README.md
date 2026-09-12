@@ -118,6 +118,10 @@ Takes the same matching flags as `transitions`, plus `--name`, `--limit`,
 `--public` (private by default), `--dry-run`, `--yes` to skip the
 confirmation, `--search-budget`, and `--export`.
 
+No song appears twice: the chain never revisits a track, and before it runs,
+copies of the same song saved under more than one Spotify id (a single and an
+album release, say) are collapsed to one.
+
 **Exporting instead of creating.** `--export FILE` writes the set, with the
 format following the extension:
 

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest import mock
 
-from accidental_dj import db, display, export
+from accidental_dj import cli, db, display, export
 from accidental_dj.camelot import compatible_codes, keys_compatible, to_camelot
 from accidental_dj.matching import (Candidate, Pair, build_pairs, longest_chain,
                                     ratio_label, tempo_match)
@@ -307,3 +307,32 @@ class TestDisplay(unittest.TestCase):
     def test_trim(self):
         self.assertEqual(display.trim("short", 10), "short")
         self.assertEqual(display.trim("a much longer title", 8), "a much …")
+
+
+class TestPlaylistDedupe(unittest.TestCase):
+    """A set must never play the same song twice."""
+
+    def rows(self):
+        return [
+            {"index": 0, "title": "Jolene", "primary_artist": "Dolly Parton"},
+            {"index": 1, "title": "Jolene - 2015 Remaster", "primary_artist": "Dolly Parton"},
+            {"index": 2, "title": "Jolene (Live at the Ryman)", "primary_artist": "Dolly Parton"},
+            {"index": 3, "title": "Jolene", "primary_artist": "The White Stripes"},
+            {"index": 4, "title": "Sicko Mode", "primary_artist": "Travis Scott"},
+        ]
+
+    def test_collapses_the_same_song_under_different_ids(self):
+        kept, dropped = cli._dedupe(self.rows())
+        self.assertEqual(dropped, 2)
+        self.assertEqual([r["title"] for r in kept],
+                         ["Jolene", "Jolene", "Sicko Mode"])
+
+    def test_keeps_the_same_title_by_a_different_artist(self):
+        kept, _ = cli._dedupe(self.rows())
+        self.assertIn("The White Stripes", [r["primary_artist"] for r in kept])
+
+    def test_nothing_dropped_when_all_distinct(self):
+        rows = [{"index": 0, "title": "A", "primary_artist": "X"},
+                {"index": 1, "title": "B", "primary_artist": "X"}]
+        kept, dropped = cli._dedupe(rows)
+        self.assertEqual((len(kept), dropped), (2, 0))
