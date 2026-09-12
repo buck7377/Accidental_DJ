@@ -1,6 +1,7 @@
 """Unit tests for the parts that decide what ends up on the page."""
 
-import json
+import csv
+import io
 import os
 import sys
 import tempfile
@@ -8,11 +9,12 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from accidental_dj import db
+from unittest import mock
+
+from accidental_dj import db, display, export
 from accidental_dj.camelot import compatible_codes, keys_compatible, to_camelot
 from accidental_dj.matching import (Candidate, Pair, build_pairs, longest_chain,
                                     ratio_label, tempo_match)
-from accidental_dj.report import payload, render
 from accidental_dj.spotify import flatten
 from accidental_dj.textnorm import clean_title, primary_artist
 
@@ -193,40 +195,6 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual((row["attempts"], row["status"]), (2, "ok"))
 
 
-class TestReport(unittest.TestCase):
-    def test_renders_self_contained_page(self):
-        rows = [
-            {"index": 0, "id": "a", "title": "Jolene", "artist": "Dolly Parton",
-             "album": "Jolene", "release_year": 1974, "duration_ms": 162000,
-             "popularity": 78, "bpm": 110.0, "camelot": "8A", "time_sig": "4/4"},
-            {"index": 1, "id": "b", "title": "</script> Attack", "artist": "Trap Guy",
-             "album": None, "release_year": 2017, "duration_ms": 180000,
-             "popularity": 60, "bpm": 111.0, "camelot": "8A", "time_sig": "4/4"},
-        ]
-        pairs = build_pairs([
-            Candidate(0, "a", 110.0, "8A", "dolly parton"),
-            Candidate(1, "b", 111.0, "8A", "trap guy"),
-        ], tolerance=3.0)
-        data = payload(rows, pairs, tolerance=3.0, max_per_track=6,
-                       allow_same_artist=False, include_half_double=True,
-                       enriched_count=2)
-        self.assertEqual(len(data["pairs"]), 1)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "out.html")
-            render(data, out)
-            with open(out, encoding="utf-8") as handle:
-                html = handle.read()
-        # No external resources, and the required attribution is present.
-        self.assertNotIn("<script src", html)
-        self.assertIn("getsongbpm.com", html)
-        # A title containing </script> must not break out of the JSON island.
-        self.assertNotIn("</script> Attack", html)
-        island = html.split('<script id="payload" type="application/json">')[1]
-        island = island.split("</script>")[0]
-        self.assertEqual(json.loads(island)["tracks"][1]["t"], "</script> Attack")
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
@@ -263,3 +231,79 @@ class TestChain(unittest.TestCase):
         chain = longest_chain(dense, max_steps=500)
         self.assertEqual(len(chain), len(set(chain)))
         self.assertGreaterEqual(len(chain), 2)
+
+
+class TestExport(unittest.TestCase):
+    tracks = [
+        {"id": "abc", "title": "Jolene", "artist": "Dolly Parton", "album": "Jolene",
+         "release_year": 1974, "bpm": 110.0, "camelot": "8A", "isrc": "X1",
+         "duration_ms": 162000},
+        {"id": "def", "title": "Sicko, Mode", "artist": "Travis Scott", "album": None,
+         "release_year": 2018, "bpm": 155.0, "camelot": "12A", "isrc": None,
+         "duration_ms": None},
+    ]
+
+    def write(self, filename):
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, filename)
+        kind = export.write(path, self.tracks, name="Test Set")
+        with open(path, encoding="utf-8") as handle:
+            return kind, handle.read()
+
+    def test_format_follows_the_extension(self):
+        self.assertEqual(export.format_for("a.csv"), "csv")
+        self.assertEqual(export.format_for("a.txt"), "txt")
+        self.assertEqual(export.format_for("a.m3u"), "m3u8")
+        self.assertEqual(export.format_for("a.m3u8"), "m3u8")
+        self.assertEqual(export.format_for("a.weird"), "csv")
+
+    def test_txt_is_pasteable_uris_in_order(self):
+        kind, text = self.write("set.txt")
+        self.assertEqual(kind, "txt")
+        self.assertEqual(text.split(), ["spotify:track:abc", "spotify:track:def"])
+
+    def test_csv_quotes_commas_and_keeps_order(self):
+        kind, text = self.write("set.csv")
+        rows = list(csv.reader(io.StringIO(text)))
+        self.assertEqual(kind, "csv")
+        self.assertEqual(rows[0][:3], ["Position", "Title", "Artist"])
+        self.assertEqual([r[1] for r in rows[1:]], ["Jolene", "Sicko, Mode"])
+        self.assertEqual([r[0] for r in rows[1:]], ["1", "2"])
+
+    def test_m3u_has_header_and_urls(self):
+        kind, text = self.write("set.m3u8")
+        self.assertEqual(kind, "m3u8")
+        self.assertTrue(text.startswith("#EXTM3U"))
+        self.assertIn("#PLAYLIST:Test Set", text)
+        self.assertIn("https://open.spotify.com/track/abc", text)
+        self.assertIn("#EXTINF:162,Dolly Parton - Jolene", text)
+        self.assertIn("#EXTINF:-1,", text)  # missing duration
+
+
+class TestDisplay(unittest.TestCase):
+    tracks = [
+        {"title": "Jolene", "primary_artist": "Dolly Parton", "artist": "Dolly Parton",
+         "release_year": 1974, "bpm": 110.0, "camelot": "8A"},
+        {"title": "Sicko Mode", "primary_artist": "Travis Scott", "artist": "Travis Scott",
+         "release_year": 2018, "bpm": 220.0, "camelot": "8A"},
+    ]
+
+    def test_plain_line_has_no_escape_codes(self):
+        line = display.transition_line(Pair(0, 1, 0.0, 0.5, True), self.tracks, color=False)
+        self.assertNotIn("\033", line)
+        for fragment in ("Jolene", "Sicko Mode", "8A", "110.0", "220.0",
+                         "double-time", "1974", "2018"):
+            self.assertIn(fragment, line)
+
+    def test_color_line_wraps_camelot_codes(self):
+        line = display.transition_line(Pair(0, 1, 0.0, 1.0, True), self.tracks, color=True)
+        self.assertIn("\033[", line)
+
+    def test_no_color_env_is_respected(self):
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(display.use_color(None))
+            self.assertFalse(display.use_color(True))
+
+    def test_trim(self):
+        self.assertEqual(display.trim("short", 10), "short")
+        self.assertEqual(display.trim("a much longer title", 8), "a much …")

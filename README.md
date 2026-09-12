@@ -1,9 +1,10 @@
 # Accidental DJ
 
-Finds pairs of songs in your Spotify Liked Songs that would mix into each
-other — same key, near-identical tempo — regardless of whether they have any
-business being played together. A 1968 country record sitting 0.4% away from a
-2017 trap song at double time is the point, not a bug.
+A terminal tool that reads your Spotify Liked Songs, finds pairs that would
+mix into each other — same key, near-identical tempo — regardless of whether
+they have any business being played together, and turns the best run of them
+into a playlist. A 1951 Hank Williams record sitting 1.8% away from a 2021
+brutal death metal track is the point, not a bug.
 
 The matcher is deliberately blind to genre, mood, era, popularity and every
 other notion of similarity. The only things it looks at are the Camelot key
@@ -51,12 +52,9 @@ source .venv/bin/activate                       # or prefix each with .venv/bin/
 
 python -m accidental_dj sync                    # pull Liked Songs into SQLite
 python -m accidental_dj enrich                  # look up tempo + key (slow)
-python -m accidental_dj build                   # write transitions.html
-python -m accidental_dj playlist --dry-run      # preview a continuous set
+python -m accidental_dj transitions             # list what it found
+python -m accidental_dj playlist                # make a playlist out of it
 ```
-
-Then open `transitions.html` in a browser. It is a single file with the data
-embedded — no server, no build step.
 
 ### sync
 
@@ -80,7 +78,17 @@ which is useful for a first test.
 
 Expect misses. A library of a few thousand tracks takes an hour or so.
 
-### build
+### transitions
+
+Prints the pairs it found, tightest tempo match first. Camelot codes are
+coloured by position on the wheel (bold for the major ring), disabled
+automatically when piped or when `NO_COLOR` is set.
+
+```bash
+python -m accidental_dj transitions --tolerance 6
+python -m accidental_dj transitions --search "hank" --same-key-only
+python -m accidental_dj transitions --max-drift 1 --limit 0
+```
 
 | flag | default | meaning |
 | --- | --- | --- |
@@ -88,10 +96,10 @@ Expect misses. A library of a few thousand tracks takes an hour or so.
 | `--max-per-track` | `6` | cap on pairs one track can appear in (`0` = uncapped) |
 | `--allow-same-artist` | off | include pairs sharing a primary artist |
 | `--no-half-double` | off | exclude half-time and double-time matches |
-| `--out` | `transitions.html` | output path |
-
-The page's drift slider filters *within* the tolerance you built with, so
-building at `--tolerance 6` and sliding down is more flexible than rebuilding.
+| `--search` | — | only pairs matching these words (title, artist, year, key) |
+| `--max-drift` | — | hide pairs above this drift |
+| `--same-key-only` | off | only identical Camelot keys |
+| `--limit` | `40` | how many to print (`0` for all) |
 
 ### playlist
 
@@ -101,13 +109,26 @@ playlist in order — so it plays as one continuous set rather than a list of
 disconnected pairs.
 
 ```bash
-python -m accidental_dj playlist --tolerance 6 --dry-run     # print it, write nothing
-python -m accidental_dj playlist --tolerance 6 --name "Set 1" # create it
+python -m accidental_dj playlist --tolerance 6 --dry-run      # print it, write nothing
+python -m accidental_dj playlist --tolerance 6 --name "Set 1" # create it on Spotify
+python -m accidental_dj playlist --export set.csv --export-only   # just a file
 ```
 
-Takes the same matching flags as `build`, plus `--name`, `--limit`, `--public`
-(private by default), `--dry-run`, `--yes` to skip the confirmation, and
-`--search-budget`.
+Takes the same matching flags as `transitions`, plus `--name`, `--limit`,
+`--public` (private by default), `--dry-run`, `--yes` to skip the
+confirmation, `--search-budget`, and `--export`.
+
+**Exporting instead of creating.** `--export FILE` writes the set, with the
+format following the extension:
+
+| extension | what you get | how to import |
+| --- | --- | --- |
+| `.txt` | one `spotify:track:…` URI per line | select all, copy, paste into an empty playlist in the Spotify desktop app |
+| `.csv` | title, artist, album, year, BPM, key, ISRC, URL | upload at soundiiz.com or tunemymusic.com, or open in a spreadsheet |
+| `.m3u8` | playlist file of Spotify URLs | players that accept M3U |
+
+Add `--export-only` to skip Spotify entirely — no write scope, no
+re-authorization, nothing touched on your account.
 
 Longest-simple-path is NP-hard, so the search is a bounded depth-first walk
 rather than a proof of optimality. The budget matters: on a 107-track library
@@ -142,17 +163,6 @@ themselves is not a surprise), and each track appears in at most
 `--max-per-track` pairs so one song in a crowded key and tempo cannot flood
 the list.
 
-## The page
-
-Two tabs — Transitions and All tracks — both sortable by clicking a column
-header (click again to reverse). Above the transitions table: a search box
-covering title, artist and year; a live maximum-drift slider; toggles for
-half/double time and same-key-only.
-
-Camelot codes are colored by wheel position — 12 numbers to 12 hues, with
-lightness separating the A and B rings — so compatible clusters are visible at
-a glance.
-
 ## Tests
 
 ```bash
@@ -165,5 +175,6 @@ mocked HTTP layer.
 ## Attribution
 
 Tempo and key data come from [GetSongBPM](https://getsongbpm.com). Their API
-terms require a visible backlink wherever the data is displayed — it is in the
-generated page's footer. Please leave it there.
+terms require a visible backlink wherever the data is displayed — it is in
+this README and in the description of any playlist the tool creates. Please
+leave it there.

@@ -13,10 +13,10 @@ from .matching import (DEFAULT_MAX_PER_TRACK, DEFAULT_SEARCH_BUDGET,
                        DEFAULT_TOLERANCE, build_pairs,
                        candidates_from_rows, longest_chain, pair_lookup,
                        ratio_label)
-from .report import payload, render
+from . import display, export
+from .textnorm import fold
 
 DEFAULT_DB = "library.db"
-DEFAULT_OUT = "transitions.html"
 
 
 def _err(message: str) -> int:
@@ -260,22 +260,39 @@ def cmd_playlist(args: argparse.Namespace) -> int:
         return _err("Could not find a chain of two or more tracks. Try a wider "
                     "--tolerance or a higher --max-per-track.")
 
+    color = display.use_color(False if args.no_color else None)
     by_endpoints = pair_lookup(pairs)
+    ordered = [track_rows[i] for i in chain]
+
     print(f"Longest continuous set: {len(chain)} tracks\n")
     for position, index in enumerate(chain, start=1):
-        track = track_rows[index]
-        print(f"{position:>3}. {float(track['bpm']):6.1f} {str(track['camelot']):>3}  "
-              f"{track['title'][:42]} — {track['primary_artist'][:24]}")
+        print(display.set_line(position, track_rows[index], color))
         if position < len(chain):
             nxt = chain[position]
             pair = by_endpoints.get((min(index, nxt), max(index, nxt)))
             if pair:
                 label = ratio_label(pair.ratio)
-                print(f"      {'':>6} {'':>3}  \u2193 {pair.drift:.2f}% drift"
-                      + (f", {label}" if label else ""))
+                note = f"↓ {pair.drift:.2f}% drift" + (f", {label}" if label else "")
+                print("            " + display.dim(note, color))
+
+    if args.export:
+        try:
+            kind = export.write(args.export, ordered, name=args.name)
+        except OSError as exc:
+            return _err(f"Could not write {args.export}: {exc}")
+        print(f"\nWrote {os.path.abspath(args.export)} ({kind}).")
+        if kind == "txt":
+            print("Import: open the file, select all, copy, then paste into an empty "
+                  "playlist in the Spotify desktop app.")
+        elif kind == "csv":
+            print("Import: upload it at soundiiz.com or tunemymusic.com, or open it "
+                  "in a spreadsheet.")
 
     if args.dry_run:
-        print("\n--dry-run: nothing was written to Spotify.")
+        print("\nNothing was written to Spotify (--dry-run).")
+        return 0
+
+    if args.export and args.export_only:
         return 0
 
     print(f"\nThis will create a {'PUBLIC' if args.public else 'private'} playlist "
@@ -313,8 +330,20 @@ def cmd_playlist(args: argparse.Namespace) -> int:
     return 0
 
 
-# -------------------------------------------------------------------- build
-def cmd_build(args: argparse.Namespace) -> int:
+# -------------------------------------------------------------- transitions
+def _matches_search(pair, tracks, terms: list[str]) -> bool:
+    """Every term must appear on one side or the other."""
+    if not terms:
+        return True
+    haystack = " ".join(
+        fold(f"{tracks[i]['title']} {tracks[i]['artist']} {tracks[i]['release_year']} "
+             f"{tracks[i]['camelot']}")
+        for i in (pair.a, pair.b)
+    )
+    return all(term in haystack for term in terms)
+
+
+def cmd_transitions(args: argparse.Namespace) -> int:
     if args.tolerance <= 0:
         return _err("--tolerance must be greater than 0.")
 
@@ -323,26 +352,31 @@ def cmd_build(args: argparse.Namespace) -> int:
         return _err(loaded)
     _conn, track_rows, candidates, pairs = loaded
 
-    data = payload(
-        track_rows, pairs,
-        tolerance=args.tolerance,
-        max_per_track=args.max_per_track,
-        allow_same_artist=args.allow_same_artist,
-        include_half_double=not args.no_half_double,
-        enriched_count=len(candidates),
-    )
-    out_path = render(data, args.out)
+    terms = [fold(t) for t in (args.search or "").split() if t.strip()]
+    shown = [
+        pair for pair in pairs
+        if (args.max_drift is None or pair.drift <= args.max_drift)
+        and (not args.same_key_only or pair.same_key)
+        and _matches_search(pair, track_rows, terms)
+    ]
 
+    color = display.use_color(False if args.no_color else None)
     print(f"{len(candidates)} of {len(track_rows)} track(s) have tempo and key.")
     if not pairs:
         print("No compatible pairs at this tolerance. Try a wider --tolerance "
               "(e.g. --tolerance 6), a higher --max-per-track, or --allow-same-artist.")
-    else:
-        half_double = sum(1 for pair in pairs if pair.ratio != 1.0)
-        same_key = sum(1 for pair in pairs if pair.same_key)
-        print(f"Found {len(pairs)} transitions "
-              f"({same_key} same-key, {half_double} half/double time).")
-    print(f"Wrote {os.path.abspath(out_path)} — open it in a browser.")
+        return 0
+    if not shown:
+        print(f"None of the {len(pairs)} transitions match those filters. Loosen "
+              "--max-drift, drop --same-key-only, or clear --search.")
+        return 0
+
+    limit = len(shown) if args.limit == 0 else min(args.limit, len(shown))
+    print(f"Showing {limit} of {len(shown)} transitions, tightest first.\n")
+    for pair in shown[:limit]:
+        print(display.transition_line(pair, track_rows, color))
+    if limit < len(shown):
+        print(f"\n{len(shown) - limit} more. Use --limit 0 to print them all.")
     return 0
 
 
@@ -391,11 +425,19 @@ def build_parser() -> argparse.ArgumentParser:
     matching.add_argument("--no-half-double", action="store_true",
                           help="exclude half-time and double-time matches")
 
-    build = subparsers.add_parser("build", parents=[common, matching],
-                                  help="write the self-contained HTML page")
-    build.add_argument("--out", default=DEFAULT_OUT,
-                       help=f"output file (default: {DEFAULT_OUT})")
-    build.set_defaults(func=cmd_build)
+    trans = subparsers.add_parser(
+        "transitions", parents=[common, matching],
+        help="list the transitions found, tightest first")
+    trans.add_argument("--search", default="",
+                       help="only pairs matching these words (title, artist, year, key)")
+    trans.add_argument("--max-drift", type=float, default=None,
+                       help="hide pairs whose tempo drift exceeds this percent")
+    trans.add_argument("--same-key-only", action="store_true",
+                       help="only pairs in the identical Camelot key")
+    trans.add_argument("--limit", type=int, default=40,
+                       help="how many to print (default: %(default)s, 0 for all)")
+    trans.add_argument("--no-color", action="store_true", help="disable colour output")
+    trans.set_defaults(func=cmd_transitions)
 
     playlist = subparsers.add_parser(
         "playlist", parents=[common, matching],
@@ -406,8 +448,14 @@ def build_parser() -> argparse.ArgumentParser:
                           help="use at most this many tracks from the chain")
     playlist.add_argument("--public", action="store_true",
                           help="make the playlist public (private by default)")
+    playlist.add_argument("--export", metavar="FILE", default=None,
+                          help="write the set to a file (.csv, .txt of Spotify URIs, "
+                               "or .m3u8) as well as creating it on Spotify")
+    playlist.add_argument("--export-only", action="store_true",
+                          help="with --export, write the file and skip Spotify entirely")
     playlist.add_argument("--dry-run", action="store_true",
                           help="print the set without writing anything to Spotify")
+    playlist.add_argument("--no-color", action="store_true", help="disable colour output")
     playlist.add_argument("--yes", action="store_true",
                           help="skip the confirmation prompt")
     playlist.add_argument("--search-budget", type=int, default=DEFAULT_SEARCH_BUDGET,
