@@ -48,7 +48,13 @@ def _fmt_duration(seconds: float) -> str:
 
 # --------------------------------------------------------------------- sync
 def cmd_sync(args: argparse.Namespace) -> int:
-    from .spotify import SpotifyConfigError, iter_liked_tracks, make_client
+    from .spotify import (SpotifyConfigError, iter_liked_tracks, make_client,
+                          verify_credentials)
+
+    # Fail on a bad id or secret before the browser opens, rather than after.
+    problem = verify_credentials()
+    if problem and "Missing:" not in problem:
+        return _err(problem)
 
     try:
         client = make_client(args.auth_cache)
@@ -357,6 +363,52 @@ def cmd_playlist(args: argparse.Namespace) -> int:
     return 0
 
 
+# -------------------------------------------------------------------- check
+def cmd_check(args: argparse.Namespace) -> int:
+    """Confirm both logins work, without changing anything."""
+    from .spotify import verify_credentials
+
+    ok = True
+
+    print("Spotify ...", end=" ", flush=True)
+    problem = verify_credentials()
+    if problem:
+        print("NOT WORKING")
+        print(f"  {problem}")
+        ok = False
+    else:
+        print("ok")
+
+    print("GetSongBPM ...", end=" ", flush=True)
+    api_key = os.environ.get("GETSONGBPM_API_KEY", "").strip()
+    if not api_key:
+        print("NOT WORKING")
+        print("  No key set. Run ./setup.sh to enter it.")
+        ok = False
+    else:
+        try:
+            from .getsongbpm import GetSongBPMClient, GetSongBPMError
+            result = GetSongBPMClient(api_key, delay=0).lookup("Billie Jean",
+                                                              "Michael Jackson")
+            if result.status == "error":
+                print("NOT WORKING")
+                print(f"  {result.detail}")
+                ok = False
+            else:
+                print("ok")
+        except GetSongBPMError as exc:
+            print("NOT WORKING")
+            print(f"  {exc}")
+            ok = False
+
+    print()
+    if ok:
+        print("Both logins work. Next:  ./dj sync")
+        return 0
+    print("Fix the above, then run ./dj check again.")
+    return 1
+
+
 # -------------------------------------------------------------- transitions
 def _matches_search(pair, tracks, terms: list[str]) -> bool:
     """Every term must appear on one side or the other."""
@@ -451,6 +503,10 @@ def build_parser() -> argparse.ArgumentParser:
                           help="include pairs where both tracks share a primary artist")
     matching.add_argument("--no-half-double", action="store_true",
                           help="exclude half-time and double-time matches")
+
+    check = subparsers.add_parser("check", parents=[common],
+                                  help="confirm your Spotify and GetSongBPM logins work")
+    check.set_defaults(func=cmd_check)
 
     trans = subparsers.add_parser(
         "transitions", parents=[common, matching],

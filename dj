@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs Accidental DJ. Use:  ./dj sync | enrich | transitions | playlist
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if [ ! -x .venv/bin/python ]; then
+  echo "Not set up yet. Run this first:  ./setup.sh" >&2
+  exit 1
+fi
+
+if [ -f env.sh ]; then
+  # shellcheck disable=SC1091
+  source env.sh
+else
+  echo "Your logins are missing. Run:  ./setup.sh" >&2
+  exit 1
+fi
+
+exec .venv/bin/python -m accidental_dj "$@"

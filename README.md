@@ -1,190 +1,168 @@
 # Accidental DJ
 
-A terminal tool that reads your Spotify Liked Songs, finds pairs that would
-mix into each other — same key, near-identical tempo — regardless of whether
-they have any business being played together, and turns the best run of them
-into a playlist. A 1951 Hank Williams record sitting 1.8% away from a 2021
-brutal death metal track is the point, not a bug.
+Finds songs in your Spotify library that would mix into each other — same key,
+almost identical tempo — no matter how little business they have being played
+together, and turns the best run of them into a playlist.
 
-The matcher is deliberately blind to genre, mood, era, popularity and every
-other notion of similarity. The only things it looks at are the Camelot key
-and the BPM.
+It has no taste and no opinion about genre. It only knows key and tempo, which
+is how you end up with a 1951 Hank Williams record flowing into brutal death
+metal, or Marvin Gaye into 90s eurodance.
 
-Tempo, key and time signature data provided by
-**[GetSongBPM](https://getsongbpm.com)**.
+Real examples from one 207-song library:
 
-## Setup
-
-```bash
-python -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+```
+Everything I Am — Kanye West  (2007, 80 BPM)   →  Glitcher — Frontierer (2018, 160 BPM)
+Lost Highway — Hank Williams  (1951, 132 BPM)  →  Shoot — BlocBoy JB (2017, 135 BPM)
+Distant Lover — Marvin Gaye   (1973, 136 BPM)  →  Be My Lover — La Bouche (1995, 136 BPM)
+I'm Broken — Pantera          (1994, 144 BPM)  →  Speechless — Lady Gaga (2009, 144 BPM)
 ```
 
-Then run everything with `.venv/bin/python` in place of `python`, or activate the
-venv first with `source .venv/bin/activate`. A venv is required on distros that
-mark the system Python as externally managed (Arch, Debian, Fedora — PEP 668);
-it is good practice everywhere else.
+## Getting started
 
-Spotify credentials — create an app at
-[developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) and
-add a redirect URI:
+You need a Mac or Linux computer and about ten minutes, most of it waiting for
+a free API key.
+
+**1. Download it**
 
 ```bash
-export SPOTIPY_CLIENT_ID=...
-export SPOTIPY_CLIENT_SECRET=...
-export SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
+git clone https://github.com/buck7377/Accidental_DJ.git
+cd Accidental_DJ
 ```
 
-Tempo and key come from [GetSongBPM](https://getsongbpm.com/api) (free key):
+**2. Run the setup**
 
 ```bash
-export GETSONGBPM_API_KEY=...
+./setup.sh
 ```
 
-Spotify's `audio-features` and `audio-analysis` endpoints were deprecated on
-2024-11-27 and return 403 to any app created after that date, so this tool
-never calls them.
+It installs what it needs and walks you through getting two free logins: one
+from Spotify, so it can read your liked songs and make playlists, and one from
+GetSongBPM, which is where the tempo and key of each song comes from. It tells
+you exactly where to click. Your logins are saved on your own computer and
+never leave it.
 
-## Use
+**3. Check it worked**
 
 ```bash
-source .venv/bin/activate                       # or prefix each with .venv/bin/
-
-python -m accidental_dj sync                    # pull Liked Songs into SQLite
-python -m accidental_dj enrich                  # look up tempo + key (slow)
-python -m accidental_dj transitions             # list what it found
-python -m accidental_dj playlist                # make a playlist out of it
+./dj check
 ```
 
-### sync
+Should say `ok` twice. If not, it tells you what to fix.
 
-Reads every saved track via `GET /v1/me/tracks` with the `user-library-read`
-scope and stores id, title, artist, album, release year, duration, popularity
-and ISRC. Re-running updates in place. `--prune` drops cached tracks you have
-since unliked. Local files are skipped.
+## Using it
 
-### enrich
-
-One GetSongBPM lookup per track, rate limited to ~1.3s per request
-(`--delay`) — their published ceiling is 3,000 requests/hour, so this stays
-comfortably inside it. Before searching, release noise is stripped from the title
-(`- 2015 Remaster`, `(Live at ...)`, `(Radio Edit)`, `(feat. ...)`, bare
-parenthetical years) and only the primary artist is used.
-
-Results are committed after every track, so Ctrl-C is safe and re-running
-resumes where it stopped. Failures and misses are cached too, so re-runs skip
-them; `--retry-misses` tries them again. `--limit N` stops after N lookups,
-which is useful for a first test.
-
-Expect misses. A library of a few thousand tracks takes an hour or so.
-
-### transitions
-
-Prints the pairs it found, tightest tempo match first. Camelot codes are
-coloured by position on the wheel (bold for the major ring), disabled
-automatically when piped or when `NO_COLOR` is set.
+**Read your liked songs.** Takes a few seconds.
 
 ```bash
-python -m accidental_dj transitions --tolerance 6
-python -m accidental_dj transitions --search "hank" --same-key-only
-python -m accidental_dj transitions --max-drift 1 --limit 0
+./dj sync
 ```
 
-| flag | default | meaning |
-| --- | --- | --- |
-| `--tolerance` | `3.0` | maximum tempo drift, as a percentage |
-| `--max-per-track` | `6` | cap on pairs one track can appear in (`0` = uncapped) |
-| `--allow-same-artist` | off | include pairs sharing a primary artist |
-| `--no-half-double` | off | exclude half-time and double-time matches |
-| `--search` | — | only pairs matching these words (title, artist, year, key) |
-| `--max-drift` | — | hide pairs above this drift |
-| `--same-key-only` | off | only identical Camelot keys |
-| `--limit` | `40` | how many to print (`0` for all) |
+The first time, a browser window asks you to approve access to your own
+Spotify account. Approve it, and you'll land on a page that fails to load —
+that's normal, you can close it. Run this again any time you want to pick up
+songs you have liked since.
 
-### playlist
-
-Treats the transitions as a graph and walks it for the longest run where every
-consecutive track is a real key-and-tempo match, then creates that as a Spotify
-playlist in order — so it plays as one continuous set rather than a list of
-disconnected pairs.
+**Look up every song's tempo and key.** This is the slow one.
 
 ```bash
-python -m accidental_dj playlist --tolerance 6 --dry-run      # print it, write nothing
-python -m accidental_dj playlist --tolerance 6 --name "Set 1" # create it on Spotify
-python -m accidental_dj playlist --export set.csv --export-only   # just a file
+./dj enrich
 ```
 
-Takes the same matching flags as `transitions`, plus `--name`, `--limit`,
-`--public` (private by default), `--dry-run`, `--yes` to skip the
-confirmation, `--search-budget`, and `--export`.
+About a minute for every 45 songs, so a 1,000 song library takes roughly
+twenty minutes. It shows progress and how long is left. You can stop it at any
+time with Ctrl-C and pick up where you left off by running it again.
 
-No song appears twice: the chain never revisits a track, and before it runs,
-copies of the same song saved under more than one Spotify id (a single and an
-album release, say) are collapsed to one.
+Expect some songs to come back empty — the tempo database does not have
+everything, and it thins out on very obscure or very new music. Those songs
+are simply left out.
 
-**Exporting instead of creating.** `--export FILE` writes the set, with the
-format following the extension:
-
-| extension | what you get | how to import |
-| --- | --- | --- |
-| `.txt` | one `spotify:track:…` URI per line | select all, copy, paste into an empty playlist in the Spotify desktop app |
-| `.csv` | title, artist, album, year, BPM, key, ISRC, URL | upload at soundiiz.com or tunemymusic.com, or open in a spreadsheet |
-| `.m3u8` | playlist file of Spotify URLs | players that accept M3U |
-
-Two notes on privacy. The playlist is created with `public: false`, but on
-Spotify "private" means unlisted rather than access-controlled: anyone with
-the link can still open any playlist. Spotify's `public` field also reads back
-unreliably after creation, so check the playlist in your Spotify client if it
-matters — the client is the authority, and you can toggle it there.
-
-Add `--export-only` to skip Spotify entirely — no write scope, no
-re-authorization, nothing touched on your account.
-
-Longest-simple-path is NP-hard, so the search is a bounded depth-first walk
-rather than a proof of optimality. The budget matters: on a 107-track library
-300k steps found a 33-track chain and 2M found 40, so the default is 2M
-(about half a second). Raise it for a big library.
-
-This is the only command that writes anything. It needs the
-`playlist-modify-private` scope on top of the read-only one, so the first run
-re-opens the browser for authorization; afterwards the broader token covers
-`sync` too.
-
-## The matching logic
-
-**Keys** are converted to [Camelot](https://mixedinkey.com/harmonic-mixing-guide/)
-notation (number = wheel position, letter = ring; `A` minor, `B` major). Two
-tracks are key-compatible if they:
-
-- share the same Camelot code, or
-- share the number but differ in letter (relative major/minor), or
-- sit one step apart on the same letter ring, wrapping between 12 and 1.
-
-**Tempos** are compatible if the two BPMs are within the tolerance of each
-other, or if one is within tolerance of double or half the other. Half and
-double time matches are included and labeled — they are how a 78 BPM ballad
-mixes into a 155 BPM trap record.
-
-**Ranking** is tempo drift ascending, then same-key pairs first. Nothing else.
-No scoring, no weighting, no filtering by genre, mood, era or similarity.
-
-Pairs sharing a primary artist are excluded by default (an artist mixing with
-themselves is not a surprise), and each track appears in at most
-`--max-per-track` pairs so one song in a crowded key and tempo cannot flood
-the list.
-
-## Tests
+**See what it found.**
 
 ```bash
-python -m unittest discover -s tests
+./dj transitions
 ```
 
-No network or API key required; the GetSongBPM client is tested against a
-mocked HTTP layer.
+Lists the pairs, closest tempo match first. Some ways to narrow it down:
 
-## Attribution
+```bash
+./dj transitions --limit 100          # show more than the default 40
+./dj transitions --same-key-only      # only the smoothest matches
+./dj transitions --search "1974"      # only pairs involving a year, artist or song
+```
 
-Tempo and key data come from [GetSongBPM](https://getsongbpm.com). Their API
-terms require a visible backlink wherever the data is displayed — it is in
-this README and in the description of any playlist the tool creates. Please
-leave it there.
+**Make the playlist.**
+
+```bash
+./dj playlist
+```
+
+It finds the longest run of songs where each one flows into the next, shows
+you the running order, and asks before creating anything. Say yes and it
+appears in your Spotify within a few seconds. Nothing is created unless you
+say yes.
+
+To name it:
+
+```bash
+./dj playlist --name "Saturday Night"
+```
+
+## Adjusting it
+
+**Not enough results?** Loosen how close the tempos must be. The default is 3%,
+meaning a 120 BPM song matches roughly 117–123.
+
+```bash
+./dj transitions --tolerance 6
+./dj playlist --tolerance 6
+```
+
+**Too loose?** Tighten it the same way with `--tolerance 1.5`. You will get
+fewer, better matches.
+
+**Other options**
+
+```bash
+./dj playlist --limit 20            # a shorter playlist
+./dj playlist --public              # anyone can find it (private by default)
+./dj playlist --dry-run             # show it, create nothing
+./dj transitions --allow-same-artist    # let an artist match themselves
+```
+
+## Saving a playlist to a file instead
+
+If you would rather not let it touch your Spotify account:
+
+```bash
+./dj playlist --export set.txt --export-only
+```
+
+Open `set.txt`, select everything, copy, and paste it into an empty playlist in
+the Spotify desktop app — the songs appear in order. Use `set.csv` instead if
+you want a spreadsheet, or to move the playlist to Apple Music or YouTube Music
+through a service like Soundiiz.
+
+## Questions
+
+**Does it change anything in my Spotify?** Only if you ask. It reads your liked
+songs, and creates a playlist when you run `./dj playlist` and answer yes. It
+never edits or deletes anything.
+
+**Will the playlist have duplicates?** No.
+
+**Where are my logins stored?** In a file called `env.sh` in this folder, on
+your computer only. It is excluded from uploads.
+
+**Some songs are missing from the results.** Either the tempo database does not
+have them, or they have no key or tempo that matches anything else in your
+library. Run `./dj enrich --retry-misses` to try the missing ones again.
+
+**Can I run it on a different computer?** Yes. Copy the folder, or clone it
+again and run `./setup.sh` with the same two logins.
+
+## Credit
+
+Tempo and key data comes from [GetSongBPM](https://getsongbpm.com), free for
+this kind of use as long as they get a link. Please leave this one here.
+
+Curious how the matching works? See [HOW-IT-WORKS.md](HOW-IT-WORKS.md).

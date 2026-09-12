@@ -8,7 +8,7 @@ audio-features and audio-analysis endpoints are deprecated (2024-11-27) and
 from __future__ import annotations
 
 import os
-from typing import Iterator
+from typing import Iterator, Optional
 
 from .textnorm import primary_artist
 
@@ -58,6 +58,41 @@ def make_client(cache_path: str = ".spotify-cache", scope: str = SCOPE):
 
     auth = SpotifyOAuth(**kwargs)
     return Spotify(auth_manager=auth, requests_timeout=30, retries=5)
+
+
+def verify_credentials() -> Optional[str]:
+    """Check the Spotify id and secret without opening a browser.
+
+    Asks for an app-only token, which needs no user login. Catching a typo
+    here beats launching the browser flow and hanging on a login page that
+    can never succeed.
+    """
+    import base64
+
+    import requests
+
+    missing = [name for name in ENV_VARS if not os.environ.get(name)]
+    if missing:
+        return "Missing: " + ", ".join(missing)
+
+    pair = f"{os.environ['SPOTIPY_CLIENT_ID']}:{os.environ['SPOTIPY_CLIENT_SECRET']}"
+    try:
+        response = requests.post(
+            "https://accounts.spotify.com/api/token", timeout=20,
+            headers={"Authorization": "Basic " + base64.b64encode(pair.encode()).decode(),
+                     "Content-Type": "application/x-www-form-urlencoded"},
+            data={"grant_type": "client_credentials"},
+        )
+    except requests.RequestException as exc:
+        return f"Could not reach Spotify: {exc}"
+
+    if response.status_code == 200:
+        return None
+    if response.status_code in (400, 401):
+        return ("Spotify rejected the Client ID or Client Secret. Copy them again "
+                "from https://developer.spotify.com/dashboard (Settings -> "
+                "View client secret), then run ./setup.sh to re-enter them.")
+    return f"Spotify answered HTTP {response.status_code}: {response.text[:120]}"
 
 
 def iter_liked_tracks(client) -> Iterator[dict]:
