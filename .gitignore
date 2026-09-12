@@ -1,0 +1,7 @@
+.venv/
+library.db
+transitions.html
+.spotify-cache
+__pycache__/
+*.pyc
+env.sh
