@@ -263,7 +263,8 @@ def _load_pairs(args: argparse.Namespace, dedupe: bool = False):
 # ----------------------------------------------------------------- playlist
 def cmd_playlist(args: argparse.Namespace) -> int:
     from .spotify import (SCOPE_PLAYLIST_PRIVATE, SCOPE_PLAYLIST_PUBLIC,
-                          SpotifyConfigError, create_playlist, make_client)
+                          SpotifyConfigError, SpotifyWriteError, create_playlist,
+                          make_client)
 
     if args.tolerance <= 0:
         return _err("--tolerance must be greater than 0.")
@@ -347,12 +348,10 @@ def cmd_playlist(args: argparse.Namespace) -> int:
             description=("Continuous key- and tempo-matched set built by Accidental DJ. "
                          "Tempo and key data from GetSongBPM."),
         )
+    except SpotifyWriteError as exc:
+        return _err(f"Could not create the playlist: {exc}")
     except Exception as exc:
-        message = str(exc)
-        if "403" in message or "scope" in message.lower():
-            message += ("\nThe cached token predates the playlist scope. Delete it and "
-                        f"re-authorize:  rm {args.auth_cache}")
-        return _err(f"Could not create the playlist: {message}")
+        return _err(f"Could not create the playlist: {exc}")
 
     print(f"\nCreated: {url}")
     return 0

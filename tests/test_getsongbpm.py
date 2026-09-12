@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 
-from accidental_dj import getsongbpm
+from accidental_dj import getsongbpm, spotify
 from accidental_dj.getsongbpm import GetSongBPMClient, GetSongBPMError
 
 
@@ -154,3 +154,39 @@ class TestRateLimiter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestPlaylistWrites(unittest.TestCase):
+    """create_playlist must use the post-Feb-2026 endpoints and batch correctly."""
+
+    def run_with(self, count):
+        calls = []
+
+        def fake_write(client, method, path, payload):
+            calls.append((method, path, payload))
+            return {"id": "PL1", "external_urls": {"spotify": "https://open.spotify.com/playlist/PL1"}}
+
+        with mock.patch.object(spotify, "_write", fake_write):
+            url = spotify.create_playlist(
+                object(), "Set", [f"t{i}" for i in range(count)], description="d")
+        return url, calls
+
+    def test_uses_the_current_endpoints(self):
+        _url, calls = self.run_with(2)
+        self.assertEqual(calls[0][:2], ("POST", "/me/playlists"))
+        self.assertEqual(calls[1][:2], ("POST", "/playlists/PL1/items"))
+        # The retired paths must not appear.
+        for _method, path, _payload in calls:
+            self.assertNotIn("/users/", path)
+            self.assertNotIn("/tracks", path)
+
+    def test_batches_at_one_hundred(self):
+        _url, calls = self.run_with(250)
+        adds = [c for c in calls if c[1].endswith("/items")]
+        self.assertEqual([len(c[2]["uris"]) for c in adds], [100, 100, 50])
+        self.assertEqual(adds[0][2]["uris"][0], "spotify:track:t0")
+        self.assertEqual(adds[-1][2]["uris"][-1], "spotify:track:t249")
+
+    def test_returns_the_playlist_url(self):
+        url, _calls = self.run_with(1)
+        self.assertEqual(url, "https://open.spotify.com/playlist/PL1")

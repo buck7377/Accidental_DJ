@@ -12,6 +12,7 @@ from typing import Iterator
 
 from .textnorm import primary_artist
 
+API_ROOT = "https://api.spotify.com/v1"
 SCOPE = "user-library-read"
 # Writing a playlist needs more than the read-only scope. Asking for it only
 # when a playlist is actually being created keeps sync read-only; the broader
@@ -101,14 +102,61 @@ def flatten(item: dict) -> dict | None:
     }
 
 
+class SpotifyWriteError(RuntimeError):
+    pass
+
+
+def _write(client, method: str, path: str, payload: dict) -> dict:
+    """Call the Web API directly.
+
+    Spotify's February 2026 migration renamed both write endpoints this tool
+    needs -- POST /users/{id}/playlists became POST /me/playlists, and
+    POST /playlists/{id}/tracks became .../items -- and spotipy still calls
+    the retired paths, which now answer 403 for every caller. So these two
+    go straight to the API rather than through the library.
+    """
+    import json
+    import time
+
+    import requests
+
+    for attempt in range(3):
+        token = client.auth_manager.get_access_token(as_dict=False)
+        response = requests.request(
+            method, f"{API_ROOT}{path}", timeout=30,
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+            data=json.dumps(payload),
+        )
+        if response.status_code in (200, 201):
+            return response.json() if response.content else {}
+        if response.status_code == 429:
+            time.sleep(float(response.headers.get("Retry-After", 2)) + 1)
+            continue
+        if response.status_code >= 500:
+            time.sleep(2 * (attempt + 1))
+            continue
+        detail = response.text[:200]
+        if response.status_code == 403:
+            raise SpotifyWriteError(
+                f"Spotify refused the write (403) at {path}. Your token carries the "
+                "right scope, so this is an app-level restriction: check that the "
+                "app at developer.spotify.com/dashboard lists your account under "
+                "Settings -> User Management.\n" + detail
+            )
+        raise SpotifyWriteError(f"HTTP {response.status_code} at {path}: {detail}")
+
+    raise SpotifyWriteError(f"{path} kept failing after 3 attempts.")
+
+
 def create_playlist(client, name: str, track_ids: list[str], *, public: bool = False,
                     description: str = "") -> str:
     """Create a playlist and fill it in order. Returns its public URL."""
-    user_id = client.current_user()["id"]
-    playlist = client.user_playlist_create(
-        user_id, name, public=public, description=description
-    )
+    playlist = _write(client, "POST", "/me/playlists",
+                      {"name": name, "public": public, "description": description})
+    playlist_id = playlist["id"]
     uris = [f"spotify:track:{track_id}" for track_id in track_ids]
     for start in range(0, len(uris), ADD_BATCH):
-        client.playlist_add_items(playlist["id"], uris[start:start + ADD_BATCH])
-    return (playlist.get("external_urls") or {}).get("spotify") or playlist["id"]
+        _write(client, "POST", f"/playlists/{playlist_id}/items",
+               {"uris": uris[start:start + ADD_BATCH]})
+    return (playlist.get("external_urls") or {}).get("spotify") or playlist_id
